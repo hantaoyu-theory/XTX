@@ -12,7 +12,7 @@ def main():
     ap.add_argument('--data', required=True)              # .csv/.csv.gz/.npz
     ap.add_argument('--outdir', required=True)
     ap.add_argument('--use_levels', type=int, default=4)
-    ap.add_argument('--window', type=int, default=120)
+    ap.add_argument('--window', type=int, default=20)
     ap.add_argument('--batch', type=int, default=512)
     ap.add_argument('--epochs', type=int, default=10)
     ap.add_argument('--lr', type=float, default=2e-4)
@@ -23,30 +23,29 @@ def main():
     ap.add_argument('--ff', type=int, default=256)
     args = ap.parse_args()
 
-    # Load arrays from CSV/CSV.GZ/NPZ
+    print("[INFO] Starting data extraction...")
     askR, bidR, askS, bidS, askN, bidN, y = load_any(args.data, L_expected=8, has_y=True)
+    print("[INFO] Data loaded. Building features...")
 
-    # Features (strictly causal)
     X_now = build_tick_features(askR, bidR, askS, bidS, askN, bidN, use_levels=args.use_levels)
     X = add_causal_temporal_features(X_now, windows=(5, 20, 60))
+    print("[INFO] Features built. Splitting and scaling data...")
 
-    # Chronological split
     T = X.shape[0]
     split = int(T * (1.0 - args.val_frac))
     X_tr, X_val = X[:split], X[split:]
     y_tr, y_val = y[:split], y[split:]
 
-    # Scale on train only
     scaler = StandardScaler()
     X_tr = scaler.fit_transform(X_tr)
     X_val = scaler.transform(X_val)
+    print("[INFO] Data split and scaled. Making sequences...")
 
-    # Windows
     W = args.window
     Xtr, ytr = make_sequences(X_tr, y_tr, W)
     Xva, yva = make_sequences(X_val, y_val, W)
+    print("[INFO] Sequences made. Preparing for training...")
 
-    # (N, W, F) -> (N, F, W)
     Xtr = torch.from_numpy(np.transpose(Xtr, (0, 2, 1)))
     Xva = torch.from_numpy(np.transpose(Xva, (0, 2, 1)))
     ytr = torch.from_numpy(ytr)
@@ -58,13 +57,16 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = LOBTransformer(in_feats=Xtr.shape[1], d_model=args.d_model, nhead=args.nhead,
                            num_layers=args.layers, dim_ff=args.ff).to(device)
+    print("[INFO] Training setup complete. Starting training loop...")
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
     loss_fn = torch.nn.MSELoss()
 
     best = (-1e9, None)
     for ep in range(1, args.epochs + 1):
         model.train()
-        for xb, yb in train_loader:
+        total_steps = len(train_loader)
+        # Training loop with fresh sampling
+        for step, (xb, yb) in enumerate(train_loader):
             xb, yb = xb.to(device), yb.to(device)
             opt.zero_grad()
             pred = model(xb)
@@ -72,6 +74,10 @@ def main():
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
+
+            # Show training progress percentage
+            progress = 100.0 * (step + 1) / total_steps
+            print(f"Training progress: {progress:.2f}% ({step + 1}/{total_steps})", end='\r')
 
         # Val R^2
         model.eval()
