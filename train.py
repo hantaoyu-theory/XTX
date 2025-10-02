@@ -43,83 +43,68 @@ def main():
     print("[INFO] Features built. Splitting and scaling data...")
 
 
+    # Simple 80/20 split (controlled by --val_frac)
     T = X.shape[0]
-    n_folds = 4  # You can change this
-    fold_size = T // (n_folds + 1)
-    val_scores = []
-    for fold in range(n_folds):
-        train_end = fold_size * (fold + 1)
-        val_start = train_end
-        val_end = val_start + fold_size
-        if val_end > T:
-            break
-        print(f"[CV] Fold {fold+1}/{n_folds}: train 0:{train_end}, val {val_start}:{val_end}")
-        X_tr, X_val = X[:train_end], X[val_start:val_end]
-        y_tr, y_val = y[:train_end], y[val_start:val_end]
+    split = int(T * (1.0 - args.val_frac))
+    X_tr, X_val = X[:split], X[split:]
+    y_tr, y_val = y[:split], y[split:]
 
-        scaler = StandardScaler()
-        X_tr = scaler.fit_transform(X_tr)
-        X_val = scaler.transform(X_val)
+    scaler = StandardScaler()
+    X_tr = scaler.fit_transform(X_tr)
+    X_val = scaler.transform(X_val)
 
-        W = args.window
-        Xtr, ytr = make_sequences(X_tr, y_tr, W)
-        Xva, yva = make_sequences(X_val, y_val, W)
+    W = args.window
+    Xtr, ytr = make_sequences(X_tr, y_tr, W)
+    Xva, yva = make_sequences(X_val, y_val, W)
 
-        Xtr = torch.from_numpy(np.transpose(Xtr, (0, 2, 1)))
-        Xva = torch.from_numpy(np.transpose(Xva, (0, 2, 1)))
-        ytr = torch.from_numpy(ytr)
-        yva = torch.from_numpy(yva)
+    Xtr = torch.from_numpy(np.transpose(Xtr, (0, 2, 1)))
+    Xva = torch.from_numpy(np.transpose(Xva, (0, 2, 1)))
+    ytr = torch.from_numpy(ytr)
+    yva = torch.from_numpy(yva)
 
-        train_loader = DataLoader(TensorDataset(Xtr, ytr), batch_size=args.batch, shuffle=False)
-        val_loader   = DataLoader(TensorDataset(Xva, yva), batch_size=args.batch, shuffle=False)
+    train_loader = DataLoader(TensorDataset(Xtr, ytr), batch_size=args.batch, shuffle=False)
+    val_loader   = DataLoader(TensorDataset(Xva, yva), batch_size=args.batch, shuffle=False)
 
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        model = LOBTransformer(in_feats=Xtr.shape[1], d_model=args.d_model, nhead=args.nhead,
-                               num_layers=args.layers, dim_ff=args.ff).to(device)
-        opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
-        loss_fn = torch.nn.MSELoss()
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = LOBTransformer(in_feats=Xtr.shape[1], d_model=args.d_model, nhead=args.nhead,
+                           num_layers=args.layers, dim_ff=args.ff).to(device)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    loss_fn = torch.nn.MSELoss()
 
-        for ep in range(1, args.epochs + 1):
-            model.train()
-            total_steps = len(train_loader)
-            for step, (xb, yb) in enumerate(train_loader):
-                xb, yb = xb.to(device), yb.to(device)
-                opt.zero_grad()
-                pred = model(xb)
-                loss = loss_fn(pred, yb)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                opt.step()
-                progress = 100.0 * (step + 1) / total_steps
-                print(f"[CV Fold {fold+1}] Epoch {ep}/{args.epochs} Training progress: {progress:.2f}% ({step + 1}/{total_steps})", end='\r')
+    for ep in range(1, args.epochs + 1):
+        model.train()
+        total_steps = len(train_loader)
+        for step, (xb, yb) in enumerate(train_loader):
+            xb, yb = xb.to(device), yb.to(device)
+            opt.zero_grad()
+            pred = model(xb)
+            loss = loss_fn(pred, yb)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
+            progress = 100.0 * (step + 1) / total_steps
+            print(f"[Train] Epoch {ep}/{args.epochs} progress: {progress:.2f}% ({step + 1}/{total_steps})", end='\r')
 
-        # Validation for this fold
-        model.eval()
-        yh, yt = [], []
-        with torch.no_grad():
-            for xb, yb in val_loader:
-                xb = xb.to(device)
-                pred = model(xb).cpu().numpy()
-                yh.append(pred); yt.append(yb.numpy())
-        yh = np.concatenate(yh); yt = np.concatenate(yt)
-        r2_va = r2(yh, yt)
-        print(f"[CV Fold {fold+1}] val R2={r2_va:.4f}")
-        val_scores.append(r2_va)
-
-    avg_r2 = float(np.mean(val_scores))
-    print(f"[CV] Average val R2 over {n_folds} folds: {avg_r2:.4f}")
+    # Validation
+    model.eval()
+    yh, yt = [], []
+    with torch.no_grad():
+        for xb, yb in val_loader:
+            xb = xb.to(device)
+            pred = model(xb).cpu().numpy()
+            yh.append(pred); yt.append(yb.numpy())
+    yh = np.concatenate(yh); yt = np.concatenate(yt)
+    r2_va = r2(yh, yt)
+    print(f"\n[Eval] val R2={r2_va:.4f}")
 
     # Persist simple metrics + config for sweep consumption
+    avg_r2 = float(r2_va)
     try:
         metrics = {
-            "fold_r2": [float(x) for x in val_scores],
-            "avg_r2": avg_r2,
+            "val_r2": avg_r2,
             "config": vars(args),
         }
         with open(os.path.join(args.outdir, 'metrics.json'), 'w') as f:
             json.dump(metrics, f, indent=2, sort_keys=True)
     except Exception as e:
         print(f"[WARN] Failed to write metrics.json to {args.outdir}: {e}")
-
-if __name__ == '__main__':
-    main()
