@@ -1,5 +1,5 @@
 # train.py
-import argparse, os, numpy as np, torch
+import argparse, os, json, numpy as np, torch
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
 from joblib import dump
@@ -12,7 +12,7 @@ def main():
     ap.add_argument('--data', required=True)              # .csv/.csv.gz/.npz
     ap.add_argument('--outdir', required=True)
     ap.add_argument('--use_levels', type=int, default=4)
-    ap.add_argument('--window', type=int, default=5)
+    ap.add_argument('--window', type=int, default=10)
     ap.add_argument('--batch', type=int, default=512)
     ap.add_argument('--epochs', type=int, default=1)
     ap.add_argument('--lr', type=float, default=2e-4)
@@ -22,6 +22,9 @@ def main():
     ap.add_argument('--layers', type=int, default=2)
     ap.add_argument('--ff', type=int, default=256)
     args = ap.parse_args()
+
+    # Ensure output directory exists for sweep/runs
+    os.makedirs(args.outdir, exist_ok=True)
 
     print("[INFO] Starting data extraction...")
     askR, bidR, askS, bidS, askN, bidN, y = load_any(args.data, L_expected=8, has_y=True)
@@ -88,7 +91,7 @@ def main():
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 opt.step()
                 progress = 100.0 * (step + 1) / total_steps
-                print(f"[CV Fold {fold+1}] Training progress: {progress:.2f}% ({step + 1}/{total_steps})", end='\r')
+                print(f"[CV Fold {fold+1}] Epoch {ep}/{args.epochs} Training progress: {progress:.2f}% ({step + 1}/{total_steps})", end='\r')
 
         # Validation for this fold
         model.eval()
@@ -103,7 +106,20 @@ def main():
         print(f"[CV Fold {fold+1}] val R2={r2_va:.4f}")
         val_scores.append(r2_va)
 
-    print(f"[CV] Average val R2 over {n_folds} folds: {np.mean(val_scores):.4f}")
+    avg_r2 = float(np.mean(val_scores))
+    print(f"[CV] Average val R2 over {n_folds} folds: {avg_r2:.4f}")
+
+    # Persist simple metrics + config for sweep consumption
+    try:
+        metrics = {
+            "fold_r2": [float(x) for x in val_scores],
+            "avg_r2": avg_r2,
+            "config": vars(args),
+        }
+        with open(os.path.join(args.outdir, 'metrics.json'), 'w') as f:
+            json.dump(metrics, f, indent=2, sort_keys=True)
+    except Exception as e:
+        print(f"[WARN] Failed to write metrics.json to {args.outdir}: {e}")
 
 if __name__ == '__main__':
     main()
