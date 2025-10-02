@@ -50,16 +50,13 @@ def build_tick_features(askRate, bidRate, askSize, bidSize, askNc, bidNc, use_le
     lvl_imb = _safe_div(Sb - Sa, (Sb + Sa))   # (T, L)
     lvl_imb_flat = lvl_imb.reshape(lvl_imb.shape[0], -1)
 
+    # Select only 10 features for now
+    # Here are 10: best_a, best_b, spread, mid, microprice, qi, dep_a, dep_b, slope_a, slope_b
     X_now = np.stack([
-        best_a, best_b, spread, mid, microprice, qi,
-        dep_a, dep_b, slope_a, slope_b,
-        top_sz_a, top_sz_b,
-        Na[:, 0], Nb[:, 0]
+        best_a, best_b, spread, mid, microprice,
+        qi, dep_a, dep_b, slope_a, slope_b
     ], axis=1)
-
-    # Concatenate per-level imbalances
-    X = np.concatenate([X_now, lvl_imb_flat], axis=1)
-    return X  # (T, F_now + L)
+    return X_now  # (T, 10)
 
 # ===== Strictly-causal temporal features =====
 
@@ -72,18 +69,10 @@ def add_causal_temporal_features(X, windows=(5, 20, 60)):
     T, F = X.shape
     feats = [X]
 
-    # lag-1 feature
+    # Only keep lag-1 as the single most important temporal feature
     lag1 = np.vstack([np.zeros((1, F), dtype=X.dtype), X[:-1]])
     feats.append(lag1)
 
-    # causal EMAs and momentum residuals
-    for w in windows:
-        alpha = 2.0 / (w + 1.0)
-        ema = np.zeros_like(X)
-        ema[0] = X[0]
-        for t in range(1, T):
-            ema[t] = alpha * X[t] + (1 - alpha) * ema[t - 1]
-        feats.append(ema)
-        feats.append(X - ema)  # momentum-like residual
+    # Do not add EMAs or residuals for now
 
-    return np.concatenate(feats, axis=1)
+    return np.concatenate(feats, axis=1)  # (T, 2*F)
