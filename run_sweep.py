@@ -5,6 +5,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime
+import threading
 
 import yaml
 
@@ -29,6 +30,8 @@ def main():
                     help='Print commands only, do not launch')
     ap.add_argument('--limit', type=int, default=None,
                     help='Run only the first N combinations')
+    ap.add_argument('--stream', action='store_true',
+                    help='Stream child output to this terminal (and log)')
     args = ap.parse_args()
 
     with open(args.sweep, 'r') as f:
@@ -64,7 +67,8 @@ def main():
         ensure_dir(outdir)
 
         # Build command
-        cmd = [sys.executable, script, '--data', data, '--outdir', outdir]
+        # Unbuffered python to get immediate progress prints
+        cmd = [sys.executable, '-u', script, '--data', data, '--outdir', outdir]
         for k, v in all_params.items():
             cmd.extend([f'--{k}', str(v)])
 
@@ -77,9 +81,46 @@ def main():
             continue
 
         # Launch with limited parallelism
-        stdout = open(log_path, 'w')
-        stderr = subprocess.STDOUT
-        procs.append((subprocess.Popen(cmd, stdout=stdout, stderr=stderr), stdout))
+        env = os.environ.copy()
+        env['PYTHONUNBUFFERED'] = '1'
+        if args.stream:
+            # Tee output to both terminal and file
+            log_f = open(log_path, 'w')
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=0,
+                text=True,
+                env=env,
+            )
+
+            def pump_output(p: subprocess.Popen, f, prefix: str):
+                buf = ''
+                while True:
+                    ch = p.stdout.read(1)
+                    if not ch:
+                        break
+                    f.write(ch)
+                    f.flush()
+                    # reflect progress and lines in terminal
+                    if ch == '\r':
+                        if buf:
+                            print(f'[{prefix}] {buf}', end='\r', flush=True)
+                    elif ch == '\n':
+                        if buf:
+                            print(f'[{prefix}] {buf}', flush=True)
+                        buf = ''
+                    else:
+                        buf += ch
+
+            t = threading.Thread(target=pump_output, args=(proc, log_f, name), daemon=True)
+            t.start()
+            procs.append((proc, log_f))
+        else:
+            stdout = open(log_path, 'w')
+            stderr = subprocess.STDOUT
+            procs.append((subprocess.Popen(cmd, stdout=stdout, stderr=stderr, env=env), stdout))
 
         # Throttle to max_parallel
         while len([p for p, _ in procs if p.poll() is None]) >= max_parallel:
