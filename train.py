@@ -108,3 +108,6 @@ def main():
             json.dump(metrics, f, indent=2, sort_keys=True)
     except Exception as e:
         print(f"[WARN] Failed to write metrics.json to {args.outdir}: {e}")
+
+if __name__ == '__main__':
+    main()
