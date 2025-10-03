@@ -50,13 +50,33 @@ def build_tick_features(askRate, bidRate, askSize, bidSize, askNc, bidNc, use_le
     lvl_imb = _safe_div(Sb - Sa, (Sb + Sa))   # (T, L)
     lvl_imb_flat = lvl_imb.reshape(lvl_imb.shape[0], -1)
 
-    # Select only 10 features for now
-    # Here are 10: best_a, best_b, spread, mid, microprice, qi, dep_a, dep_b, slope_a, slope_b
+    # Enhanced feature set for better performance
+    volume_imb = _safe_div(dep_b - dep_a, dep_a + dep_b)  # Total volume imbalance
+    price_impact = _safe_div(spread, mid)  # Relative spread
+    
+    # Level-wise features (use more levels)
+    lvl_spreads = A - B  # Spread at each level (T, L)
+    lvl_mids = 0.5 * (A + B)  # Mid at each level (T, L)
+    
+    # Weighted features
+    total_ask_vol = Sa.sum(axis=1)
+    total_bid_vol = Sb.sum(axis=1)
+    weighted_ask_price = _safe_div((A * Sa).sum(axis=1), total_ask_vol)
+    weighted_bid_price = _safe_div((B * Sb).sum(axis=1), total_bid_vol)
+    
+    # More sophisticated imbalance
+    top3_ask_vol = Sa[:, :3].sum(axis=1) 
+    top3_bid_vol = Sb[:, :3].sum(axis=1)
+    top3_imb = _safe_div(top3_bid_vol - top3_ask_vol, top3_bid_vol + top3_ask_vol)
+    
+    # 16 enhanced features
     X_now = np.stack([
-        best_a, best_b, spread, mid, microprice,
-        qi, dep_a, dep_b, slope_a, slope_b
+        best_a, best_b, spread, mid, microprice, price_impact,
+        qi, volume_imb, top3_imb,
+        dep_a, dep_b, total_ask_vol, total_bid_vol,
+        weighted_ask_price, weighted_bid_price, slope_a, slope_b
     ], axis=1)
-    return X_now  # (T, 10)
+    return X_now  # (T, 17)
 
 # ===== Strictly-causal temporal features =====
 

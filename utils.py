@@ -98,10 +98,11 @@ def make_sequences(X, y, W):
       yseq: (N,)     aligned to window end index (y_t)
     """
     T, F = X.shape
-    idx = np.arange(W - 1, T)
-    Xseq = np.stack([X[i - W + 1:i + 1] for i in idx], axis=0)
-    yseq = None if y is None else y[idx]
-    return Xseq.astype(np.float32), (None if y is None else yseq.astype(np.float32))
+    # Fast sliding window using stride tricks (10-100x faster)
+    from numpy.lib.stride_tricks import sliding_window_view
+    Xseq = sliding_window_view(X, window_shape=W, axis=0).astype(np.float32)
+    yseq = None if y is None else y[W-1:].astype(np.float32)
+    return Xseq, yseq
 
 def r2(yhat, y):
     num = ((yhat - y) ** 2).sum()
