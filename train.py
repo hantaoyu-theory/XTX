@@ -124,19 +124,22 @@ def main():
             progress = 100.0 * (step + 1) / total_steps
             print(f"[Train] Epoch {ep}/{args.epochs} progress: {progress:.2f}% ({step + 1}/{total_steps})", end='\r')
         
+        # Evaluate on validation set after each epoch
+        model.eval()
+        yh, yt = [], []
+        with torch.no_grad():
+            for xb, yb in val_loader:
+                xb = xb.to(device, non_blocking=True)
+                pred = model(xb).cpu().numpy()
+                yh.append(pred); yt.append(yb.numpy())
+        yh = np.concatenate(yh); yt = np.concatenate(yt)
+        r2_epoch = r2(yh, yt)
+        print(f"\n[Epoch {ep}] Validation R²={r2_epoch:.5f}")
+        
         scheduler.step()  # Update learning rate
 
-    # Validation
-    model.eval()
-    yh, yt = [], []
-    with torch.no_grad():
-        for xb, yb in val_loader:
-            xb = xb.to(device)
-            pred = model(xb).cpu().numpy()
-            yh.append(pred); yt.append(yb.numpy())
-    yh = np.concatenate(yh); yt = np.concatenate(yt)
-    r2_va = r2(yh, yt)
-    print(f"\n[Eval] val R2={r2_va:.4f}")
+    # Final validation (already computed in last epoch, but for consistency)
+    print(f"\n[Final] Training completed. Final validation R²={r2_epoch:.5f}")
 
     # Save trained model and scaler (REQUIRED by task)
     torch.save({
@@ -144,13 +147,13 @@ def main():
         'config': vars(args),
         'model_class': 'LOBTransformer',
         'scaler_state': scaler,
-        'val_r2': r2_va
+        'val_r2': r2_epoch
     }, os.path.join(args.outdir, 'final_model.pt'))
     
     print(f"[INFO] Model saved to {args.outdir}/final_model.pt")
 
     # Persist simple metrics + config for sweep consumption
-    avg_r2 = float(r2_va)
+    avg_r2 = float(r2_epoch)
     try:
         metrics = {
             "val_r2": avg_r2,
