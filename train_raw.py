@@ -97,25 +97,25 @@ def main():
     
     print(f"Train: {X_train.shape}, Val: {X_val.shape}")
     
-    # Convert to PyTorch
+    # Convert to PyTorch and transpose to match model expectation (B, F, T)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
-    X_train = torch.from_numpy(X_train).to(device)
+    # X_seq shape: (N, W, F) -> need (N, F, W) for model
+    X_train = torch.from_numpy(X_train).transpose(1, 2).to(device)  # (N, F, W)
     y_train = torch.from_numpy(y_train).to(device)
-    X_val = torch.from_numpy(X_val).to(device)
+    X_val = torch.from_numpy(X_val).transpose(1, 2).to(device)      # (N, F, W)
     y_val = torch.from_numpy(y_val).to(device)
     
     # Create model - input size is number of selected features (12)
     input_size = len(top2_features)
     model = LOBTransformer(
-        input_size=input_size,
+        in_feats=input_size,
         d_model=args.d_model,
         nhead=args.nhead,
         num_layers=args.layers,
-        ff_dim=args.ff,
-        dropout=args.dropout,
-        seq_len=args.window
+        dim_ff=args.ff,
+        pdrop=args.dropout
     ).to(device)
     
     print(f"Model input size: {input_size}")
@@ -166,16 +166,26 @@ def main():
         
         scheduler.step()
         
-        # Evaluation
+        # Evaluation (batch-wise to avoid memory issues)
         model.eval()
         with torch.no_grad():
-            # Training R²
-            train_outputs = model(X_train)
-            train_r2 = r2(y_train.cpu().numpy(), train_outputs.cpu().numpy())
+            # Training R² (evaluate in batches)
+            train_preds = []
+            for i in range(0, len(X_train), args.batch):
+                batch_X = X_train[i:i+args.batch]
+                batch_pred = model(batch_X)
+                train_preds.append(batch_pred.cpu())
+            train_outputs = torch.cat(train_preds, dim=0)
+            train_r2 = r2(y_train.cpu().numpy(), train_outputs.numpy())
             
-            # Validation R²
-            val_outputs = model(X_val)
-            val_r2 = r2(y_val.cpu().numpy(), val_outputs.cpu().numpy())
+            # Validation R² (evaluate in batches)
+            val_preds = []
+            for i in range(0, len(X_val), args.batch):
+                batch_X = X_val[i:i+args.batch]
+                batch_pred = model(batch_X)
+                val_preds.append(batch_pred.cpu())
+            val_outputs = torch.cat(val_preds, dim=0)
+            val_r2 = r2(y_val.cpu().numpy(), val_outputs.numpy())
         
         avg_train_loss = np.mean(train_losses)
         print(f"Epoch {epoch+1}/{args.epochs}: Train Loss={avg_train_loss:.6f}, Train R²={train_r2:.6f}, Val R²={val_r2:.6f}, LR={scheduler.get_last_lr()[0]:.2e}")
