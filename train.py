@@ -124,17 +124,30 @@ def main():
             progress = 100.0 * (step + 1) / total_steps
             print(f"[Train] Epoch {ep}/{args.epochs} progress: {progress:.2f}% ({step + 1}/{total_steps})", end='\r')
         
-        # Evaluate on validation set after each epoch
+        # Evaluate on both training and validation sets after each epoch
         model.eval()
-        yh, yt = [], []
+        
+        # Training R²
+        yh_train, yt_train = [], []
+        with torch.no_grad():
+            for xb, yb in train_loader:
+                xb = xb.to(device, non_blocking=True)
+                pred = model(xb).cpu().numpy()
+                yh_train.append(pred); yt_train.append(yb.numpy())
+        yh_train = np.concatenate(yh_train); yt_train = np.concatenate(yt_train)
+        train_r2 = r2(yh_train, yt_train)
+        
+        # Validation R²
+        yh_val, yt_val = [], []
         with torch.no_grad():
             for xb, yb in val_loader:
                 xb = xb.to(device, non_blocking=True)
                 pred = model(xb).cpu().numpy()
-                yh.append(pred); yt.append(yb.numpy())
-        yh = np.concatenate(yh); yt = np.concatenate(yt)
-        r2_epoch = r2(yh, yt)
-        print(f"\n[Epoch {ep}] Validation R²={r2_epoch:.5f}")
+                yh_val.append(pred); yt_val.append(yb.numpy())
+        yh_val = np.concatenate(yh_val); yt_val = np.concatenate(yt_val)
+        r2_epoch = r2(yh_val, yt_val)
+        
+        print(f"\n[Epoch {ep}] Train R²={train_r2:.5f}, Val R²={r2_epoch:.5f}")
         
         scheduler.step()  # Update learning rate
 
