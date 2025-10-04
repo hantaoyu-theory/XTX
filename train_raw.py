@@ -88,26 +88,37 @@ def main():
     # Create sequences
     print("Creating sequences...")
     X_seq, y_seq = make_sequences(X, y, args.window)
-    print(f"Sequences shape: X={X_seq.shape}, y={y_seq.shape}")
+    print(f"Raw sequences shape: X={X_seq.shape}, y={y_seq.shape}")
+    print(f"Expected from make_sequences: X should be (N, window, features) = (N, {args.window}, {len(top2_features)})")
     
     # Split data
     split_idx = int((1 - args.val_frac) * len(X_seq))
     X_train, X_val = X_seq[:split_idx], X_seq[split_idx:]
     y_train, y_val = y_seq[:split_idx], y_seq[split_idx:]
     
-    print(f"Train: {X_train.shape}, Val: {X_val.shape}")
+    print(f"After split - Train: {X_train.shape}, Val: {X_val.shape}")
     
     # Convert to PyTorch - make_sequences returns (N, W, F), model expects (B, F, T)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
-    # X_seq shape: (N, W, F) = (N, 10, 12) -> transpose to (N, F, W) = (N, 12, 10)
-    X_train = torch.from_numpy(X_train.transpose(0, 2, 1)).to(device)  # (N, 12, 10)
+    # Check numpy shapes before conversion
+    print(f"Numpy shapes before torch conversion:")
+    print(f"  X_train: {X_train.shape}")
+    print(f"  After transpose(0,2,1): {X_train.transpose(0, 2, 1).shape}")
+    
+    # Convert to PyTorch tensors with proper shape for model (B, F, T)
+    X_train_tensor = torch.from_numpy(X_train.transpose(0, 2, 1)).to(device)
     y_train = torch.from_numpy(y_train).to(device)
-    X_val = torch.from_numpy(X_val.transpose(0, 2, 1)).to(device)      # (N, 12, 10) 
+    X_val_tensor = torch.from_numpy(X_val.transpose(0, 2, 1)).to(device)
     y_val = torch.from_numpy(y_val).to(device)
     
-    print(f"Final tensor shapes: X_train={X_train.shape}, y_train={y_train.shape}")
+    print(f"Final PyTorch tensor shapes:")
+    print(f"  X_train: {X_train_tensor.shape} (should be N, 12, 10)")
+    print(f"  y_train: {y_train.shape}")
+    
+    # Reassign for rest of code
+    X_train, X_val = X_train_tensor, X_val_tensor
     
     # Create model - input size is number of selected features (12)
     input_size = len(top2_features)
@@ -149,6 +160,11 @@ def main():
         for i in range(0, len(X_train), args.batch):
             batch_X = X_train[i:i+args.batch]
             batch_y = y_train[i:i+args.batch]
+            
+            # Debug: print batch shape on first iteration
+            if i == 0 and epoch == 0:
+                print(f"First batch shape: {batch_X.shape}")
+                print(f"Expected: (batch_size, 12, 10)")
             
             optimizer.zero_grad()
             outputs = model(batch_X)
