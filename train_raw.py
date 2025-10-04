@@ -31,17 +31,19 @@ def apply_time_weighting(losses, time_weighting='none', alpha=0.1):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', required=True)
-    parser.add_argument('--outdir', default='artifacts')
-    parser.add_argument('--epochs', type=int, default=15)
-    parser.add_argument('--lr', type=float, default=1e-4)
-    parser.add_argument('--batch_size', type=int, default=256)
-    parser.add_argument('--seq_len', type=int, default=100)
+    parser.add_argument('--outdir', required=True)
+    parser.add_argument('--use_levels', type=int, default=4)  # From train.py (not used but for compatibility)
+    parser.add_argument('--window', type=int, default=10)     # From train.py (not used but for compatibility)
+    parser.add_argument('--batch', type=int, default=512)     # Changed from batch_size to batch (like train.py)
+    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--lr', type=float, default=2e-4)
+    parser.add_argument('--val_frac', type=float, default=0.2)
     parser.add_argument('--d_model', type=int, default=128)
-    parser.add_argument('--nhead', type=int, default=8)
-    parser.add_argument('--layers', type=int, default=4)
+    parser.add_argument('--nhead', type=int, default=4)
+    parser.add_argument('--layers', type=int, default=2)
     parser.add_argument('--ff', type=int, default=256)
-    parser.add_argument('--dropout', type=float, default=0.1)
-    parser.add_argument('--time_weighting', choices=['none', 'linear', 'exponential'], default='none')
+    parser.add_argument('--time_weighting', type=str, default='exponential', 
+                       choices=['none', 'linear', 'exponential'])
     parser.add_argument('--sample_frac', type=float, default=None, help='Sample fraction of data')
     
     args = parser.parse_args()
@@ -60,13 +62,21 @@ def main():
         df = df.sample(frac=args.sample_frac, random_state=42).sort_index()
         print(f"Sampled data shape: {df.shape}")
     
-    # Separate features and targets - use raw features directly
-    feature_cols = [col for col in df.columns if col != 'y']
-    X = df[feature_cols].values.astype(np.float32)
+    # Use only top 2 levels (12 features total)
+    top2_features = []
+    for level in range(2):  # 0, 1 (top 2 levels)
+        top2_features.extend([
+            f'askRate_{level}', f'bidRate_{level}',
+            f'askSize_{level}', f'bidSize_{level}', 
+            f'askNc_{level}', f'bidNc_{level}'
+        ])
+    
+    # Select only these 12 features
+    X = df[top2_features].values.astype(np.float32)
     y = df['y'].values.astype(np.float32)
     
-    print(f"Raw features: {len(feature_cols)} columns")
-    print(f"Feature columns: {feature_cols[:5]}...{feature_cols[-5:]}")  # Show first and last 5
+    print(f"Selected top-2 features: {len(top2_features)} columns")
+    print(f"Feature columns: {top2_features}")
     
     # Normalize features
     scaler = StandardScaler()
@@ -76,11 +86,11 @@ def main():
     
     # Create sequences
     print("Creating sequences...")
-    X_seq, y_seq = make_sequences(X, y, args.seq_len)
+    X_seq, y_seq = make_sequences(X, y, args.window)
     print(f"Sequences shape: X={X_seq.shape}, y={y_seq.shape}")
     
     # Split data
-    split_idx = int(0.8 * len(X_seq))
+    split_idx = int((1 - args.val_frac) * len(X_seq))
     X_train, X_val = X_seq[:split_idx], X_seq[split_idx:]
     y_train, y_val = y_seq[:split_idx], y_seq[split_idx:]
     
@@ -95,8 +105,8 @@ def main():
     X_val = torch.from_numpy(X_val).to(device)
     y_val = torch.from_numpy(y_val).to(device)
     
-    # Create model - input size is number of raw features
-    input_size = len(feature_cols)
+    # Create model - input size is number of selected features (12)
+    input_size = len(top2_features)
     model = LOBTransformer(
         input_size=input_size,
         d_model=args.d_model,
@@ -104,7 +114,7 @@ def main():
         num_layers=args.layers,
         ff_dim=args.ff,
         dropout=args.dropout,
-        seq_len=args.seq_len
+        seq_len=args.window
     ).to(device)
     
     print(f"Model input size: {input_size}")
@@ -121,7 +131,7 @@ def main():
     # Save config
     config = vars(args)
     config['input_size'] = input_size
-    config['feature_cols'] = feature_cols
+    config['top2_features'] = top2_features
     with open(os.path.join(args.outdir, 'config.yaml'), 'w') as f:
         yaml.dump(config, f)
     
@@ -133,9 +143,9 @@ def main():
         
         # Training
         train_losses = []
-        for i in range(0, len(X_train), args.batch_size):
-            batch_X = X_train[i:i+args.batch_size]
-            batch_y = y_train[i:i+args.batch_size]
+        for i in range(0, len(X_train), args.batch):
+            batch_X = X_train[i:i+args.batch]
+            batch_y = y_train[i:i+args.batch]
             
             optimizer.zero_grad()
             outputs = model(batch_X)
