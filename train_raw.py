@@ -42,6 +42,7 @@ def main():
     parser.add_argument('--nhead', type=int, default=4)
     parser.add_argument('--layers', type=int, default=2)
     parser.add_argument('--ff', type=int, default=256)
+    parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--time_weighting', type=str, default='exponential', 
                        choices=['none', 'linear', 'exponential'])
     parser.add_argument('--sample_frac', type=float, default=None, help='Sample fraction of data')
