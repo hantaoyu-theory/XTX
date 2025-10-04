@@ -97,15 +97,17 @@ def main():
     
     print(f"Train: {X_train.shape}, Val: {X_val.shape}")
     
-    # Convert to PyTorch and transpose to match model expectation (B, F, T)
+    # Convert to PyTorch - make_sequences returns (N, W, F), model expects (B, F, T)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
-    # X_seq shape: (N, W, F) -> need (N, F, W) for model
-    X_train = torch.from_numpy(X_train).transpose(1, 2).to(device)  # (N, F, W)
+    # X_seq shape: (N, W, F) = (N, 10, 12) -> transpose to (N, F, W) = (N, 12, 10)
+    X_train = torch.from_numpy(X_train.transpose(0, 2, 1)).to(device)  # (N, 12, 10)
     y_train = torch.from_numpy(y_train).to(device)
-    X_val = torch.from_numpy(X_val).transpose(1, 2).to(device)      # (N, F, W)
+    X_val = torch.from_numpy(X_val.transpose(0, 2, 1)).to(device)      # (N, 12, 10) 
     y_val = torch.from_numpy(y_val).to(device)
+    
+    print(f"Final tensor shapes: X_train={X_train.shape}, y_train={y_train.shape}")
     
     # Create model - input size is number of selected features (12)
     input_size = len(top2_features)
