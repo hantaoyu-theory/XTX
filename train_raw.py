@@ -108,17 +108,15 @@ def main():
     print(f"  After transpose(0,2,1): {X_train.transpose(0, 2, 1).shape}")
     
     # Convert to PyTorch tensors with proper shape for model (B, F, T)
-    X_train_tensor = torch.from_numpy(X_train.transpose(0, 2, 1)).to(device)
+    # X_train is (N, W, F) = (N, 10, 12), we need (N, F, W) = (N, 12, 10)
+    X_train = torch.from_numpy(X_train).permute(0, 2, 1).to(device)  # (N, 12, 10)
     y_train = torch.from_numpy(y_train).to(device)
-    X_val_tensor = torch.from_numpy(X_val.transpose(0, 2, 1)).to(device)
+    X_val = torch.from_numpy(X_val).permute(0, 2, 1).to(device)      # (N, 12, 10)
     y_val = torch.from_numpy(y_val).to(device)
     
     print(f"Final PyTorch tensor shapes:")
-    print(f"  X_train: {X_train_tensor.shape} (should be N, 12, 10)")
+    print(f"  X_train: {X_train.shape} (should be N, 12, 10)")
     print(f"  y_train: {y_train.shape}")
-    
-    # Reassign for rest of code
-    X_train, X_val = X_train_tensor, X_val_tensor
     
     # Create model - input size is number of selected features (12)
     input_size = len(top2_features)
