@@ -65,12 +65,11 @@ def main():
     ytr = torch.from_numpy(ytr).float()
     yva = torch.from_numpy(yva).float()
 
-    # Optimized DataLoaders: multiprocessing + memory pinning + prefetch
+    # Single-process DataLoaders to avoid memory issues from worker multiplication
     train_loader = DataLoader(TensorDataset(Xtr, ytr), batch_size=args.batch, 
-                             shuffle=False, num_workers=4, pin_memory=True, 
-                             persistent_workers=True, prefetch_factor=2)
+                             shuffle=False, num_workers=0, pin_memory=True)
     val_loader = DataLoader(TensorDataset(Xva, yva), batch_size=args.batch, 
-                           shuffle=False, num_workers=2, pin_memory=True)
+                           shuffle=False, num_workers=0, pin_memory=True)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
