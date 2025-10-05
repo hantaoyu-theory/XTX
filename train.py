@@ -137,6 +137,30 @@ def main():
         yh_train = np.concatenate(yh_train); yt_train = np.concatenate(yt_train)
         train_r2 = r2(yh_train, yt_train)
         
+        # Additional training diagnostics: time-weighted Train MSE and Train-tail R²
+        try:
+            N_tr = len(yh_train)
+            pos = np.arange(N_tr, dtype=np.float32)
+            if args.time_weighting == 'linear':
+                tw = 0.5 + 0.5 * (pos / max(N_tr, 1))
+            elif args.time_weighting == 'exponential':
+                tw = np.exp(2.0 * (pos / max(N_tr, 1)))
+            else:
+                tw = np.ones(N_tr, dtype=np.float32)
+            tw = tw / (tw.mean() if tw.mean() != 0 else 1.0)
+
+            se_train = (yh_train - yt_train) ** 2
+            train_mse_unweighted = float(se_train.mean())
+            train_mse_weighted = float(np.average(se_train, weights=tw))
+
+            tail_n = max(1, int(0.2 * N_tr))
+            train_tail_r2 = r2(yh_train[-tail_n:], yt_train[-tail_n:])
+        except Exception:
+            # Fallback in case of any unexpected numeric issues
+            train_mse_unweighted = float('nan')
+            train_mse_weighted = float('nan')
+            train_tail_r2 = float('nan')
+        
         # Validation R²
         yh_val, yt_val = [], []
         with torch.no_grad():
@@ -146,8 +170,10 @@ def main():
                 yh_val.append(pred); yt_val.append(yb.numpy())
         yh_val = np.concatenate(yh_val); yt_val = np.concatenate(yt_val)
         r2_epoch = r2(yh_val, yt_val)
+        val_mse = float(((yh_val - yt_val) ** 2).mean())
         
         print(f"\n[Epoch {ep}] Train R²={train_r2:.5f}, Val R²={r2_epoch:.5f}")
+        print(f"[Epoch {ep}] Train MSE(w)={train_mse_weighted:.6f}, Train MSE={train_mse_unweighted:.6f}, Val MSE={val_mse:.6f}, TrainTail R²={train_tail_r2:.5f}")
         
         scheduler.step()  # Update learning rate
 

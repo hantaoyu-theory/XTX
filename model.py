@@ -4,18 +4,25 @@ import torch
 import torch.nn as nn
 
 class PositionalEncoding(nn.Module):
+    """Learned absolute positional embeddings.
+
+    Replaces fixed sinusoidal encoding with a trainable nn.Embedding(max_len, d_model).
+    Forward expects x of shape (B, T, D) and adds position embeddings for [0..T-1].
+    """
     def __init__(self, d_model: int, max_len: int = 8192):
         super().__init__()
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2, dtype=torch.float) * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
+        self.max_len = max_len
+        self.pe = nn.Embedding(max_len, d_model)
+        # Default nn.Embedding init is suitable; optionally could scale
+        # nn.init.normal_(self.pe.weight, mean=0.0, std=d_model ** -0.5)
 
     def forward(self, x):  # x: (B, T, D)
-        T = x.size(1)
-        return x + self.pe[:T].unsqueeze(0)
+        B, T, D = x.shape
+        if T > self.max_len:
+            raise ValueError(f"Sequence length {T} exceeds max_len {self.max_len} for positional embeddings")
+        pos = torch.arange(T, device=x.device)
+        pos_emb = self.pe(pos).unsqueeze(0)  # (1, T, D)
+        return x + pos_emb
 
 def causal_mask(T: int, device):
     # disallow attending to future positions
@@ -24,7 +31,7 @@ def causal_mask(T: int, device):
     return mask  # (T, T)
 
 class LOBTransformer(nn.Module):
-    def __init__(self, in_feats: int, d_model: int = 128, nhead: int = 4,
+    def __init__(self, in_feats: int, d_model: int = 128, nhead: int = 2,
                  num_layers: int = 2, dim_ff: int = 256, pdrop: float = 0.1):
         super().__init__()
         self.in_proj = nn.Linear(in_feats, d_model)
