@@ -105,13 +105,12 @@ def main():
     # Check numpy shapes before conversion
     print(f"Numpy shapes before torch conversion:")
     print(f"  X_train: {X_train.shape}")
-    print(f"  After transpose(0,2,1): {X_train.transpose(0, 2, 1).shape}")
     
-    # Convert to PyTorch tensors with proper shape for model (B, F, T)
-    # X_train is (N, W, F) = (N, 10, 12), we need (N, F, W) = (N, 12, 10)
-    X_train = torch.from_numpy(X_train).permute(0, 2, 1).to(device)  # (N, 12, 10)
+    # Convert to PyTorch tensors - use make_sequences output as-is
+    # Based on debug: make_sequences already returns (N, 12, 10) which is (N, F, T) - exactly what we need!
+    X_train = torch.from_numpy(X_train).to(device)  # Use as-is: (N, 12, 10)
     y_train = torch.from_numpy(y_train).to(device)
-    X_val = torch.from_numpy(X_val).permute(0, 2, 1).to(device)      # (N, 12, 10)
+    X_val = torch.from_numpy(X_val).to(device)      # Use as-is: (N, 12, 10)
     y_val = torch.from_numpy(y_val).to(device)
     
     print(f"Final PyTorch tensor shapes:")

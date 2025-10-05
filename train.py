@@ -73,7 +73,8 @@ def main():
                            shuffle=False, num_workers=2, pin_memory=True)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
+    print(f"Using device: {device}")
+
     # Enable cudnn auto-tuning for fixed input shapes (5-15% speedup)
     if device.type == 'cuda':
         torch.backends.cudnn.benchmark = True

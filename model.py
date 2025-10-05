@@ -25,25 +25,16 @@ def causal_mask(T: int, device):
 
 class LOBTransformer(nn.Module):
     def __init__(self, in_feats: int, d_model: int = 128, nhead: int = 4,
-                 num_layers: int = 2, dim_ff: int = 256, pdrop: float = 0.1, use_cross_feature_attn: bool = True):
+                 num_layers: int = 2, dim_ff: int = 256, pdrop: float = 0.1):
         super().__init__()
         self.in_proj = nn.Linear(in_feats, d_model)
-        self.use_cross_feature_attn = use_cross_feature_attn
         
-        # Dual-stream architecture: temporal + cross-feature attention
+        # Temporal attention encoder
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model, nhead=nhead, dim_feedforward=dim_ff,
             dropout=pdrop, batch_first=True, norm_first=True
         )
-        self.temporal_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers//2)
-        
-        if use_cross_feature_attn:
-            # Cross-feature attention (attend across features at each time step)
-            cross_layer = nn.TransformerEncoderLayer(
-                d_model=d_model, nhead=nhead//2, dim_feedforward=dim_ff//2,
-                dropout=pdrop, batch_first=True, norm_first=True
-            )
-            self.cross_feature_encoder = nn.TransformerEncoder(cross_layer, num_layers=num_layers//2)
+        self.temporal_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         
         self.posenc = PositionalEncoding(d_model)
         # Multi-head prediction (price movement + volatility + liquidity)
@@ -72,15 +63,5 @@ class LOBTransformer(nn.Module):
         mask = self._get_causal_mask(T, x.device)
         h_temporal = self.temporal_encoder(x, mask=mask)  # (B, T, D)
         
-        # Cross-feature attention (if enabled)
-        if self.use_cross_feature_attn:
-            # Reshape to treat each time step's features separately
-            h_reshaped = h_temporal.view(B * T, 1, -1)  # (B*T, 1, D)
-            # Apply cross-feature attention (no causal mask - features can attend to each other)
-            h_cross = self.cross_feature_encoder(h_reshaped)  # (B*T, 1, D)
-            h_final = h_cross.view(B, T, -1)  # (B, T, D)
-        else:
-            h_final = h_temporal
-        
-        h_last = h_final[:, -1]          # (B, D) -> predict for last tick in window
+        h_last = h_temporal[:, -1]       # (B, D) -> predict for last tick in window
         return self.head(h_last).squeeze(-1)  # (B,)
