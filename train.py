@@ -24,10 +24,28 @@ def main():
     ap.add_argument('--time_weighting', type=str, default='exponential', 
                     choices=['none', 'linear', 'exponential'], 
                     help='How to weight samples by time')
+    ap.add_argument('--resume', type=str, default=None,
+                    help='Path to a saved checkpoint (.pt) to continue training from. '
+                         'Loads model_state_dict and, if present, scaler/config for consistency.')
     args = ap.parse_args()
 
     # Ensure output directory exists for sweep/runs
     os.makedirs(args.outdir, exist_ok=True)
+
+    # Optional: load resume checkpoint early to adopt critical config (avoids shape mismatches)
+    ckpt = None
+    if args.resume is not None:
+        if not os.path.isfile(args.resume):
+            raise FileNotFoundError(f"--resume path not found: {args.resume}")
+        ckpt = torch.load(args.resume, map_location='cpu')
+        ck_cfg = ckpt.get('config', {}) if isinstance(ckpt, dict) else {}
+        # Adopt dataset/arch-critical fields from checkpoint to ensure compatibility
+        for k in ['use_levels', 'window', 'd_model', 'nhead', 'layers', 'ff', 'val_frac', 'time_weighting']:
+            if k in ck_cfg:
+                setattr(args, k, ck_cfg[k])
+        print(f"[INFO] Resuming from {args.resume} with arch and data params: "
+              f"d_model={args.d_model}, nhead={args.nhead}, layers={args.layers}, ff={args.ff}, "
+              f"window={args.window}, use_levels={args.use_levels}, val_frac={args.val_frac}")
 
     print("[INFO] Starting data extraction...")
     askR, bidR, askS, bidS, askN, bidN, y = load_any(args.data, L_expected=8, has_y=True)
@@ -51,9 +69,16 @@ def main():
     X_tr, X_val = X[:split], X[split:]
     y_tr, y_val = y[:split], y[split:]
 
-    scaler = StandardScaler()
-    X_tr = scaler.fit_transform(X_tr)
-    X_val = scaler.transform(X_val)
+    # Reuse scaler from checkpoint if available to ensure exact continuity; otherwise fit anew on train split only
+    if ckpt is not None and isinstance(ckpt, dict) and ('scaler_state' in ckpt) and (ckpt['scaler_state'] is not None):
+        scaler = ckpt['scaler_state']
+        X_tr = scaler.transform(X_tr)
+        X_val = scaler.transform(X_val)
+        print("[INFO] Reused scaler from checkpoint for consistent feature scaling.")
+    else:
+        scaler = StandardScaler()
+        X_tr = scaler.fit_transform(X_tr)
+        X_val = scaler.transform(X_val)
 
     W = args.window
     Xtr, ytr = make_sequences(X_tr, y_tr, W)
@@ -80,6 +105,15 @@ def main():
     
     model = LOBTransformer(in_feats=Xtr.shape[1], d_model=args.d_model, nhead=args.nhead,
                            num_layers=args.layers, dim_ff=args.ff).to(device)
+    # Load weights if resuming
+    if ckpt is not None and isinstance(ckpt, dict) and ('model_state_dict' in ckpt):
+        missing = model.load_state_dict(ckpt['model_state_dict'], strict=False)
+        try:
+            miss_keys = getattr(missing, 'missing_keys', [])
+            unexp_keys = getattr(missing, 'unexpected_keys', [])
+        except Exception:
+            miss_keys, unexp_keys = [], []
+        print(f"[INFO] Loaded model_state from checkpoint (missing={miss_keys}, unexpected={unexp_keys}).")
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     
