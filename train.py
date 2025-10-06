@@ -37,7 +37,8 @@ def main():
     if args.resume is not None:
         if not os.path.isfile(args.resume):
             raise FileNotFoundError(f"--resume path not found: {args.resume}")
-        ckpt = torch.load(args.resume, map_location='cpu')
+        # PyTorch 2.6 defaults to weights_only=True which blocks unpickling sklearn objects in the checkpoint
+        ckpt = torch.load(args.resume, map_location='cpu', weights_only=False)
         ck_cfg = ckpt.get('config', {}) if isinstance(ckpt, dict) else {}
         # Adopt dataset/arch-critical fields from checkpoint to ensure compatibility
         for k in ['use_levels', 'window', 'd_model', 'nhead', 'layers', 'ff', 'val_frac', 'time_weighting']:
