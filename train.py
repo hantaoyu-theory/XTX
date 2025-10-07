@@ -26,7 +26,7 @@ def _time_weights(kind: str, pos: torch.Tensor, total: int) -> torch.Tensor:
     return w / w.mean()
 
 
-def train_phase(model, opt, scheduler, device, X_tr, y_tr, X_val, y_val, args, tag: str, scaler: StandardScaler | None):
+def train_phase(model, opt, scheduler, device, X_tr, y_tr, X_val, y_val, args, tag, scaler):
     # Fit/Update scaler
     if args.scaler_mode == 'cumulative':
         if scaler is None:
@@ -40,8 +40,8 @@ def train_phase(model, opt, scheduler, device, X_tr, y_tr, X_val, y_val, args, t
     Xva, yva = make_sequences(scaler.transform(X_val), y_val, args.window)
 
     # Model expects (B, F, T)
-    Xtr_t = torch.from_numpy(Xtr).float().contiguous()
-    Xva_t = torch.from_numpy(Xva).float().contiguous()
+    Xtr_t = torch.from_numpy(Xtr).float().transpose(1, 2).contiguous()
+    Xva_t = torch.from_numpy(Xva).float().transpose(1, 2).contiguous()
     ytr_t = torch.from_numpy(ytr).float()
     yva_t = torch.from_numpy(yva).float()
 
@@ -58,6 +58,8 @@ def train_phase(model, opt, scheduler, device, X_tr, y_tr, X_val, y_val, args, t
         train_sst = 0.0
         train_loss_sum = 0.0
         train_count = 0
+        total_steps = len(tr_loader)
+        tick = max(1, total_steps // 20)  # update about 20 times per epoch
         for step, (xb, yb) in enumerate(tr_loader):
             xb, yb = xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
@@ -78,6 +80,11 @@ def train_phase(model, opt, scheduler, device, X_tr, y_tr, X_val, y_val, args, t
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
+            # lightweight progress line
+            if (step % tick == 0) or (step + 1 == total_steps):
+                pct = (step + 1) * 100.0 / total_steps
+                print(f"\r[Train] Epoch {ep}/{args.epochs} progress: {pct:6.2f}% ({step+1}/{total_steps})", end='', flush=True)
+        print()  # newline after epoch progress
         if scheduler is not None:
             scheduler.step()
 
@@ -92,7 +99,6 @@ def train_phase(model, opt, scheduler, device, X_tr, y_tr, X_val, y_val, args, t
         yt = np.concatenate(yt) if yt else np.empty((0,), dtype=np.float32)
         val_r2 = r2(yh, yt) if len(yt) else float('nan')
     # Print progress bar and training metrics (minimal)
-    total_steps = len(tr_loader)
     print(f"[Train] Epoch {ep}/{args.epochs} progress: 100.00% ({total_steps}/{total_steps})")
     train_mse = train_loss_sum / max(1, train_count)
     train_r2 = (1.0 - (train_sse / max(1e-12, train_sst))) if train_sst > 0 else float('nan')
