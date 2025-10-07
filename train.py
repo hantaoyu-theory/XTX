@@ -40,8 +40,8 @@ def train_phase(model, opt, scheduler, device, X_tr, y_tr, X_val, y_val, args, t
     Xva, yva = make_sequences(scaler.transform(X_val), y_val, args.window)
 
     # Model expects (B, F, T)
-    Xtr_t = torch.from_numpy(Xtr).float().transpose(1, 2).contiguous()
-    Xva_t = torch.from_numpy(Xva).float().transpose(1, 2).contiguous()
+    Xtr_t = torch.from_numpy(Xtr).float().contiguous()
+    Xva_t = torch.from_numpy(Xva).float().contiguous()
     ytr_t = torch.from_numpy(ytr).float()
     yva_t = torch.from_numpy(yva).float()
 
