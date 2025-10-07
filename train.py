@@ -53,6 +53,11 @@ def train_phase(model, opt, scheduler, device, X_tr, y_tr, X_val, y_val, args, t
 
     for ep in range(1, args.epochs + 1):
         model.train()
+        # Train accumulators for R^2 and MSE
+        train_sse = 0.0
+        train_sst = 0.0
+        train_loss_sum = 0.0
+        train_count = 0
         for step, (xb, yb) in enumerate(tr_loader):
             xb, yb = xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
@@ -64,6 +69,12 @@ def train_phase(model, opt, scheduler, device, X_tr, y_tr, X_val, y_val, args, t
                 pos = torch.arange(step * args.batch, step * args.batch + len(pred), device=device)
                 tw = _time_weights(args.time_weighting, pos, N_tr)
                 loss = (losses * tw).mean()
+            # accumulate train metrics (unweighted)
+            sqe = ((pred - yb) ** 2)
+            train_loss_sum += float(sqe.sum().item())
+            train_count += len(yb)
+            train_sse += float(sqe.sum().item())
+            train_sst += float((yb ** 2).sum().item())
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
@@ -80,9 +91,16 @@ def train_phase(model, opt, scheduler, device, X_tr, y_tr, X_val, y_val, args, t
         yh = np.concatenate(yh) if yh else np.empty((0,), dtype=np.float32)
         yt = np.concatenate(yt) if yt else np.empty((0,), dtype=np.float32)
         val_r2 = r2(yh, yt) if len(yt) else float('nan')
-        # Log LR if available
-        lr = opt.param_groups[0]['lr']
-        print(f"[Epoch {ep} {tag}] Val R²={val_r2:.5f} | LR={lr:.2e}")
+    # Print progress bar and training metrics (minimal)
+    total_steps = len(tr_loader)
+    print(f"[Train] Epoch {ep}/{args.epochs} progress: 100.00% ({total_steps}/{total_steps})")
+    train_mse = train_loss_sum / max(1, train_count)
+    train_r2 = (1.0 - (train_sse / max(1e-12, train_sst))) if train_sst > 0 else float('nan')
+    print(f"[Epoch {ep} {tag}] Train R²={train_r2:.5f}, Train MSE={train_mse:.6f}")
+
+    # Existing Val R² line kept as-is
+    lr = opt.param_groups[0]['lr']
+    print(f"[Epoch {ep} {tag}] Val R²={val_r2:.5f} | LR={lr:.2e}")
 
     return scaler, float(val_r2)
 
@@ -151,6 +169,9 @@ def main():
             if args.restart_per_phase in ('optimizer','both'):
                 opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
             if args.restart_per_phase in ('scheduler','both'):
+                # Ensure base LR is reset before creating a new scheduler
+                for g in opt.param_groups:
+                    g['lr'] = args.lr
                 if args.sched == 'cosine':
                     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
                 else:
