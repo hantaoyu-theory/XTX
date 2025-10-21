@@ -1,4 +1,3 @@
-# model.py
 import math
 import torch
 import torch.nn as nn
@@ -9,12 +8,10 @@ class PositionalEncoding(nn.Module):
     Replaces fixed sinusoidal encoding with a trainable nn.Embedding(max_len, d_model).
     Forward expects x of shape (B, T, D) and adds position embeddings for [0..T-1].
     """
-    def __init__(self, d_model: int, max_len: int = 8192):
+    def __init__(self, d_model: int, max_len: int = 64):  # Much smaller for typical windows
         super().__init__()
         self.max_len = max_len
         self.pe = nn.Embedding(max_len, d_model)
-        # Default nn.Embedding init is suitable; optionally could scale
-        # nn.init.normal_(self.pe.weight, mean=0.0, std=d_model ** -0.5)
 
     def forward(self, x):  # x: (B, T, D)
         B, T, D = x.shape
@@ -42,9 +39,9 @@ class LOBTransformer(nn.Module):
             dropout=pdrop, batch_first=True, norm_first=True
         )
         self.temporal_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        
         self.posenc = PositionalEncoding(d_model)
-        # Multi-head prediction (price movement + volatility + liquidity)
+        
+        # Prediction head
         self.head = nn.Sequential(
             nn.LayerNorm(d_model),
             nn.Linear(d_model, d_model//2),
@@ -60,9 +57,10 @@ class LOBTransformer(nn.Module):
             self._causal_masks[T] = mask
         return self._causal_masks[T]
 
-    def forward(self, x):  # x: (B, F, T)
+    def forward(self, x, t=None):  # x: (B, F, T), t is ignored (kept for compatibility)
         B, F, T = x.shape
         x = x.transpose(1, 2)           # (B, T, F)
+        
         x = self.in_proj(x)              # (B, T, D)
         x = self.posenc(x)               # (B, T, D)
         
