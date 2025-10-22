@@ -14,6 +14,63 @@ from stable_features import build_tick_features
 from model import LOBTransformer
 
 
+def get_feature_names_from_stable_features():
+    """
+    Parse stable_features.py to extract feature names from the code.
+    Returns list of feature names in the order they appear in np.column_stack.
+    """
+    try:
+        with open('stable_features.py', 'r') as f:
+            content = f.read()
+        
+        # Find the np.column_stack section
+        if 'np.column_stack([' in content:
+            start = content.find('np.column_stack([')
+            end = content.find('])', start)
+            stack_section = content[start:end]
+            
+            # Extract variable names (lines with commas that aren't comments)
+            feature_names = []
+            for line in stack_section.split('\n'):
+                # Remove inline comments first
+                if '#' in line:
+                    line = line.split('#')[0]
+                
+                line = line.strip()
+                
+                # Skip empty lines, the column_stack line itself, and comment-only lines
+                if not line or 'np.column_stack' in line:
+                    continue
+                
+                # Remove trailing comma
+                var_name = line.rstrip(',').strip()
+                
+                # Only add if it's a valid variable name (not empty, not a bracket)
+                if var_name and var_name not in ['[', ']', '']:
+                    feature_names.append(var_name)
+            
+            return feature_names
+    except Exception as e:
+        print(f"Warning: Could not parse feature names from stable_features.py: {e}")
+        return None
+
+def get_feature_abbreviations(num_features):
+    """
+    Generate feature abbreviations based on feature names from stable_features.py.
+    Falls back to generic names if parsing fails.
+    """
+    feature_names = get_feature_names_from_stable_features()
+    
+    if feature_names is None or len(feature_names) != num_features:
+        # Fallback to generic names
+        print(f"Using generic feature names (could not parse or mismatch)")
+        feature_names = [f'feat{i}' for i in range(num_features)]
+    
+    # Create abbreviations: remove underscores, take first 3 chars, uppercase
+    feature_abbr = [str(name).replace('_', '')[:3].upper() for name in feature_names]
+    return feature_abbr, feature_names
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--data', default='train.csv.gz')
@@ -49,16 +106,17 @@ def main():
     num_of_features = X.shape[1]
     print(f"Features shape: {X.shape} (T={T}, F={num_of_features})")
 
-    # Flexible feature abbreviation: use first 3 letters of each feature name if available
-    if hasattr(X, 'columns'):
-        feature_names = list(X.columns)
-    else:
-        feature_names = [f'f{i}' for i in range(X.shape[1])]
-    feature_abbr = [str(name)[:3].upper() for name in feature_names]
+    # Automatically detect feature names by parsing stable_features.py
+    feature_abbr, feature_names = get_feature_abbreviations(num_of_features)
     feature_str = '_'.join(feature_abbr)
-    # Auto-generate experiment name
+    print(f"Detected {num_of_features} features: {feature_names}")
+    print(f"Feature abbreviations: {feature_str}")
+    
+    # Auto-generate experiment name with feature abbreviations
     if args.wandb_name is None:
         args.wandb_name = f"feat_lr{args.lr:.0e}_w{args.window}_l{args.layers}_r{args.ratio:.1f}_start{args.train_start:.2f}_end{args.train_end:.2f}_val{args.val_end:.2f}_levels{args.use_levels}_dmodel{args.d_model}_f{feature_str}"
+    
+    print(f"Experiment name: {args.wandb_name}")
     
     # Initialize wandb
     wandb.init(
@@ -66,17 +124,6 @@ def main():
         name=args.wandb_name,
         config=vars(args)
     )
-    
-    # Load data
-    print("Loading data...")
-    askR, bidR, askS, bidS, askN, bidN, y = load_any(args.data, L_expected=8, has_y=True)
-    print(f"Loaded {len(y)} timesteps with {askR.shape[1]} levels")
-    
-    print("Building enhanced features with NC data...")
-    X = build_tick_features(askR, bidR, askS, bidS, askN, bidN, use_levels=args.use_levels)
-    T = X.shape[0]
-    num_of_features = X.shape[1]
-    print(f"Features shape: {X.shape} (T={T}, F={num_of_features})")
     
     # Calculate split indices
     train_start_idx = int(T * args.train_start)
@@ -114,8 +161,8 @@ def main():
     print(f"Time weights: min={time_weights_tr.min():.3f}, max={time_weights_tr.max():.3f}, ratio={args.ratio}")
     
     # Convert to tensors
-    Xtr_t = torch.from_numpy(Xtr).float() 
-    Xva_t = torch.from_numpy(Xva).float() 
+    Xtr_t = torch.from_numpy(Xtr).float()  
+    Xva_t = torch.from_numpy(Xva).float()
     ytr_t = torch.from_numpy(ytr).float()
     yva_t = torch.from_numpy(yva).float()
     weights_t = torch.from_numpy(time_weights_tr).float()  # (N_tr,) - sample weights
@@ -348,7 +395,8 @@ def main():
         'train_start': args.train_start,
         'train_end': args.train_end,
         'val_end': args.val_end,
-        'ratio': args.ratio
+        'ratio': args.ratio,
+        'feature_names': feature_names
     }, os.path.join(args.outdir, 'final_model.pt'))
     
     dump(scaler, os.path.join(args.outdir, 'scaler.pkl'))
@@ -358,6 +406,7 @@ def main():
             'final_val_r2': float(best_val_r2),
             'final_val_mse': float(val_mse),
             'n_features': num_of_features,
+            'feature_names': feature_names,
             'train_start': args.train_start,
             'train_end': args.train_end,
             'val_end': args.val_end,
